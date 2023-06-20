@@ -1,0 +1,223 @@
+---
+title: "Final Project 2 - COVID19 Report"
+date: '2023-06-20'
+output: html_document
+---
+## Import Libraries
+``` {r libraries}
+library(tidyverse)
+library(lubridate)
+```
+
+# Fetch data
+This chunk of code creates the URLs that contain the data we want to analyze.
+
+``` {r create_urls}
+# get data from four files by combining file names with paths
+
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_global.csv",
+                "time_series_covid19_confirmed_US.csv", "time_series_covid19_deaths_US.csv")
+
+urls <- str_c(url_in, file_names)
+
+# population data
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+```
+
+# Read in the data
+Next, we'll import the data from the URLs we created.
+
+```{r import_data}
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+uid <- read_csv(uid_lookup_url)
+```
+
+# Tidy Data
+We want the data organized in such a way that makes it easy to do analysis in R.  This means making sure that each row is an observation, and each column is a variable.  I'm also joining the different data sets for cases and deaths into one data set that includes each as a variable.
+
+```{r tidying_data}
+global_cases_T <- global_cases %>%
+  pivot_longer(cols = -c(`Province/State`,
+                         `Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(-c(Lat,Long))
+
+global_deaths_T <- global_deaths %>%
+  pivot_longer(cols = -c(`Province/State`,
+                         `Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(-c(Lat,Long))
+
+global_T <- global_cases_T %>%
+  full_join(global_deaths_T) %>%
+  rename(Country_Region = `Country/Region`,
+         Province_State = `Province/State`) %>%
+  mutate(date = mdy(date)) %>%
+  filter(cases > 0) %>%
+  unite("Combined_Key",
+        c(Province_State, Country_Region),
+        sep = ",",
+        na.rm = TRUE,
+        remove = FALSE) %>%
+  left_join(uid, by = c("Province_State", "Country_Region", "Combined_Key")) %>%
+  select(-c(UID,FIPS)) %>%
+  select(Province_State, Country_Region, date, cases, deaths, Population, Combined_Key)
+
+US_cases_T <- US_cases %>% 
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+US_deaths_T <- US_deaths %>% 
+  pivot_longer(cols = -(UID:Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+US_T <- US_cases_T %>%
+  full_join(US_deaths_T)
+```
+
+## Visualizing Data and Basic Analysis of US and State of Missouri
+In this section I wanted to create several visualizations of the US compared to the state of Missouri. 
+
+The first two charts show new cases and new deaths by date on a log scale.  The next two charts show the same data only without the log scaling.  
+
+I think that using a log scale to show the two on the same plot makes it appear that the number of deaths is much closer to the number of cases than it really is.  This could easily mislead someone looking at the chart, not knowing to pay attention to the scale on the y axis.
+```{r viz_analyze}
+US_T_by_State <- US_T %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases),
+            deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(deaths_per_million = deaths*1000000 / Population) %>%
+  select(Province_State, Country_Region, date, cases, deaths, deaths_per_million, Population) %>%
+  ungroup() %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+
+US_Totals <- US_T_by_State %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases),
+            deaths = sum(deaths),
+            Population = sum(Population)) %>%
+  mutate(deaths_per_million = deaths*1000000 / Population) %>%
+  select(Country_Region, date, cases, deaths, deaths_per_million, Population) %>%
+  ungroup() %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+
+US_Totals %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x= date, y = new_cases)) +
+  geom_line(aes(color = "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text = element_text(angle = 90)) +
+  labs(title = "COVID19 in US", y = NULL)
+
+US_T_by_State %>%
+  filter(Province_State == "Missouri", cases > 0) %>%
+  ggplot(aes(x= date, y = new_cases)) +
+  geom_line(aes(color = "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text = element_text(angle = 90)) +
+  labs(title = "COVID19 in MO", y = NULL)
+
+US_Totals %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x= date, y = new_cases)) +
+  geom_line(aes(color = "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  #scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text = element_text(angle = 90)) +
+  labs(title = "COVID19 in US", y = NULL)
+
+US_T_by_State %>%
+  filter(Province_State == "Missouri", cases > 0) %>%
+  ggplot(aes(x= date, y = new_cases)) +
+  geom_line(aes(color = "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  #scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text = element_text(angle = 90)) +
+  labs(title = "COVID19 in MO", y = NULL)
+
+US_state_totals <- US_T_by_State %>%
+  group_by(Province_State) %>%
+  summarize(deaths = max(deaths),
+            cases = max(cases),
+            population = max(Population),
+            cases_per_thou = 1000 * cases / population,
+            deaths_per_thou = 1000 * deaths / population) %>%
+  filter(cases > 0, population > 0)
+
+```
+
+# Modeling Data
+I wanted to explore is the relationship between the percentage of land use that is Urban in each state to see if that has an impact on the number of cases in each state per thousand persons. 
+
+First, I found a source for the percentage of land use by state.  However, the most recent numbers published by the USDA is as of 2012.  I'm not sure if there has been a significant change in urban land use in the last 10 years or so.
+
+Next, I used a linear model to see if there was a relationship in the data between these two variables. 
+
+The results from that model suggest that there isn't a significant relationship between the two data points, which is surprising to me based on the theory that COVID-19 spread more rapidly through more densely populated areas.  The percentage of land use that is urban by state may not be a perfect way to measure population density. 
+
+You can see from the plot that most states dedicate less than 10% of their land to urban development, but a couple are near 20% and some are near 40%.
+
+Note: I removed the District of Columbia from the data as it is not technically considered a state, but it is worth mentioning that 100% of D.C. is considered urban land use.
+```{r modeling}
+# add in percentage land urban/rural
+landuse_url <-  "https://www.ers.usda.gov/webdocs/DataFiles/52096/MajorLandUse.csv?v=4435.6"
+
+landuse_by_state <- read_csv(landuse_url)
+
+US_state_totals_landuse <- US_state_totals %>%
+  left_join(landuse_by_state %>% 
+              select(Year, `Region or State`, `Total land`, `Land in urban areas`), by = c("Province_State" = "Region or State")) %>%
+  filter(Year == 2012) %>%
+  filter(Province_State != "District of Columbia") %>%
+  mutate(PercUrban = as.numeric(`Land in urban areas`) / as.numeric(`Total land`))
+
+mod <- lm(cases_per_thou ~ PercUrban, data = US_state_totals_landuse)
+
+summary(mod)
+
+US_state_total_predicted <- US_state_totals_landuse %>% mutate(pred = predict(mod))
+
+US_state_total_predicted %>%
+  ggplot() +
+  geom_point(aes(x = PercUrban, y = cases_per_thou), color = "blue") +
+  geom_point(aes(x = PercUrban, y = pred), color = "red")
+
+```
+
+# Discussion of Bias 
+Bias already in the data could come in the form of how a COVID 19 case is reported.  This could vary by state and it could also vary by test or test type based on what I know about the different tests.  It's also worth mentioning that its possible that these have changed over the course of the pandemic, in that data collected towards the end might have been done so differently than it was at the beginning.  I think this would be hard to mitigate at this point, however it is definitely worth mentioning.
+
+My personal bias could come through in my political leanings, my personal experience with COVID-19, and the impact that the pandemic had on me personally.  It could also come through what we have learned about the virus and how it behaves after the pandemic has been declared over.
+
