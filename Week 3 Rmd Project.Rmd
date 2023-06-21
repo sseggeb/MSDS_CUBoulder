@@ -21,6 +21,11 @@ url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType
 ```{r import}
 nypd_shooting_incident_data <- read.csv(url_in)
 ```
+### Summary of the Data
+
+This is a list of every shooting incident that occurred in NYC from 2006 to 2022.  It is manually reviewed before being posted to the NYPD website each year.  Each row is a shooting incident.
+
+There are a few data fields where there are blank entries.  It appears that these were either unknown at the time of entry or were missed. 
 
 ### Tidying and Transforming
 
@@ -46,24 +51,19 @@ nypd_shooting_incident_data_TT <- nypd_shooting_incident_data %>%
   select(-X_COORD_CD, -Y_COORD_CD)
 ```
 
-### Summary of the Data
-This is a list of every shooting incident that occurred in NYC from 2006 to 2022.  It is manually reviewed before being posted to the NYPD website each year.  Each row is a shooting incident.
 
-There are a few data fields where there are blank entries.  It appears that these were either unknown at the time of entry or were missed. 
 
 ```{r summary}
 summary(nypd_shooting_incident_data_TT)
 ```
 
-### Total Number of Shooting Incidents by Borough and Year
+### Analysis: Total Number of Shooting Incidents by Borough and Year
 
-The first chart shows the total number of incidents in each borough. The plots are faceted by Year.
+The first chart shows the total number of incidents in each borough, faceted by Year. The second plot shows the same data on a line chart. 
 
-The second plot shows the same data on a line chart. 
+As you can see from these two charts, I wanted to compare the absolute number of shooting incidents across the years that the data come from.  From 2006 to 2011, it appears that the number of shooting incidents remained fairly constant.  Then, from 2011 to 2019 the number of shooting incidents decreased nearly every year.  In 2020 there was a dramatic increase in the number of shooting incidents back to levels not seen since 2011.  I'm a bit perplexed by this, since 2020 was also the first year of the COVID-19 pandemic, I would have expected to see shooting incidents decrease dramatically.  Further investigation should be done to explore this trend.
 
-Interestingly, it appears that shooting incidents were on the decline in all boroughs up until 2020.  In 2020 each of the boroughs experienced a significant jump.  
-
-The last chart is faceted by borough and shows the lat/long of each shooting incident, colored by whether the incident was flagged as murder.  The percentage of incidents flagged as murder was about the same for each borough (~20%).  I thought it was interesting that murders were spread out fairly evenly.
+In the third chart I'm highlighting a different question I had, which was whether murders occurred in clusters or 'hot spots'.  This chart is faceted by borough and shows the lat/long of each shooting incident, and colored by whether the incident was flagged as murder.  The percentage of incidents flagged as murder was about the same for each borough (~20%).  I thought it was interesting that murders were spread out fairly evenly across the boroughs.  
 
 ``` {r vis}
 nypd_shooting_incident_data_TT %>%
@@ -93,11 +93,12 @@ ggplot(nypd_shooting_incident_data_TT, aes(x= Longitude, y = Latitude)) +
   geom_point(aes(color = STATISTICAL_MURDER_FLAG))
 
 ```
-### Proportion of Shooting Incidents by Hour of Day
 
-The next chart shows the proportion of incidents by the hour of the day.
+### Analysis: Proportion of Shooting Incidents by Hour of Day
 
-I believe it is obvious to see that the hours of the day with the least shooting incidents are between 6 and 11 am, while the time of day when most of the incidents occurred was between 10pm and 1am.
+The next chart shows the proportion of incidents by the hour of day.
+
+I wanted to check to see if the data verified a common belief that violent crime happens mostly at night.  It appears the hours of the day with the least shooting incidents are between 6am and 11 am, while the time of day when most of the incidents occurred was between 10pm and 1am.  The hours of the day with the most shooting incidents are nearly 8x the hours of the day with the least.
 
 ``` {r hours} 
 nypd_shooting_incident_data_TT %>%
@@ -109,14 +110,18 @@ nypd_shooting_incident_data_TT %>%
   geom_col(aes(x = Hour, y = Incident_prop))
 ```
 
-### Modeling Data
-In order to create a model, I'm going to filter the data to complete rows only, this gets rid of rows that have an NA in any data point.  
+### Modeling the Data
+
+Note: Before creating a model, I've filtered the data to complete rows only, this gets rid of rows that have an 'NA' in any data point.  
 
 I'd like to explore the relationship between whether a shooting incident is flagged as murder to where the shooting incident occurred (inside vs outside) and which borough it occurred in.  
 
 To do this, I'm using a linear regression model with the murder flag as the dependent variable and borough and location description as independent variables.
 
+The first table shows the borough, location of occurrence description, the predicted murder rate by the model, the number of shooting incidents and murders, and the percent of murders.
+
 The summary table of the model shows that Brooklyn and Staten Island have the lowest murder rate, and if the shooting incident occurs outside, it is less likely to result in murder, which seems plausible.
+
 ```{r modeling}
 nypd_complete <- nypd_shooting_incident_data_TT %>% filter(complete.cases(.))
 
@@ -125,14 +130,14 @@ mod <- lm(STATISTICAL_MURDER_FLAG ~ BORO + LOC_OF_OCCUR_DESC, data = nypd_comple
 
 nypd_shooting_murder_predicted <- nypd_complete %>%
   filter(LOC_OF_OCCUR_DESC != "") %>% 
-  mutate(predicted_murder_percent = predict(mod))
+  mutate(pred_murder_rate = predict(mod))
 
 nypd_shooting_murder_predicted %>%
   group_by(BORO, LOC_OF_OCCUR_DESC) %>%
   mutate(incident_count = n(),
             murder_count = sum(STATISTICAL_MURDER_FLAG),
-            percent_murder = murder_count/n()) %>%
-  distinct(BORO, LOC_OF_OCCUR_DESC, incident_count, murder_count, percent_murder, predicted_murder_percent)
+            murder_rate = murder_count/n()) %>%
+  distinct(BORO, LOC_OF_OCCUR_DESC, incident_count, murder_count, murder_rate, pred_murder_rate)
   
 summary(mod)
 
