@@ -1,0 +1,147 @@
+---
+title: "NYPD Shooting Incident Project"
+date: '2023-05-25'
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r libraries, echo=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+### URL to data file
+
+```{r get_data}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+```
+
+### Importing Data
+
+```{r import}
+nypd_shooting_incident_data <- read.csv(url_in)
+```
+
+### Tidying and Transforming
+
+Here I am changing appropriate variables to factor, date, and time types.
+
+```{r tidytransform}
+nypd_shooting_incident_data_TT <- nypd_shooting_incident_data %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         OCCUR_TIME = hms(OCCUR_TIME),
+         BORO = factor(BORO),
+         LOC_OF_OCCUR_DESC = factor(LOC_OF_OCCUR_DESC),
+         PRECINCT = factor(PRECINCT),
+         JURISDICTION_CODE = factor(JURISDICTION_CODE),
+         LOC_CLASSFCTN_DESC = factor(LOC_CLASSFCTN_DESC),
+         LOCATION_DESC = factor(LOCATION_DESC),
+         PERP_SEX = factor(PERP_SEX),
+         PERP_RACE = factor(PERP_RACE),
+         VIC_SEX = factor(VIC_SEX),
+         VIC_RACE = factor(VIC_RACE),
+         VIC_AGE_GROUP = factor(VIC_AGE_GROUP, levels = c("<18","18-24","25-44", "45-64", "65+","UNKNOWN"), ordered = TRUE),
+         PERP_AGE_GROUP = factor(PERP_AGE_GROUP, levels = c("<18","18-24","25-44", "45-64", "65+","UNKNOWN"), ordered = TRUE),
+         STATISTICAL_MURDER_FLAG = as.logical(STATISTICAL_MURDER_FLAG)) %>%
+  select(-X_COORD_CD, -Y_COORD_CD)
+```
+
+### Summary of the Data
+This is a list of every shooting incident that occurred in NYC from 2006 to 2022.  It is manually reviewed before being posted to the NYPD website each year.  Each row is a shooting incident.
+
+There are a few data fields where there are blank entries.  It appears that these were either unknown at the time of entry or were missed. 
+
+```{r summary}
+summary(nypd_shooting_incident_data_TT)
+```
+
+### Total Number of Shooting Incidents by Borough and Year
+
+The first chart shows the total number of incidents in each borough. The plots are faceted by Year.
+
+The second plot shows the same data on a line chart. 
+
+Interestingly, it appears that shooting incidents were on the decline in all boroughs up until 2020.  In 2020 each of the boroughs experienced a significant jump.  
+
+The last chart is faceted by borough and shows the lat/long of each shooting incident, colored by whether the incident was flagged as murder.  The percentage of incidents flagged as murder was about the same for each borough (~20%).  I thought it was interesting that murders were spread out fairly evenly.
+
+``` {r vis}
+nypd_shooting_incident_data_TT %>%
+  mutate(Year = year(OCCUR_DATE)) %>%
+  group_by(BORO, Year) %>%
+  summarise(Incidents = n()) %>%
+  arrange(BORO) %>%
+  
+  ggplot() +
+  geom_col(aes(x= BORO, y = Incidents)) +
+  facet_wrap(~Year) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))
+
+nypd_shooting_incident_data_TT %>%
+  mutate(Year = year(OCCUR_DATE)) %>%
+  group_by(BORO, Year) %>%
+  summarise(Incidents = n()) %>%
+  arrange(BORO) %>%
+  
+  ggplot(aes(x= Year, y = Incidents)) +
+  geom_line(aes(color = BORO)) +
+  geom_point(aes(color = BORO))
+
+ggplot(nypd_shooting_incident_data_TT, aes(x= Longitude, y = Latitude)) +
+  facet_wrap("BORO")+
+  geom_point(aes(color = STATISTICAL_MURDER_FLAG))
+
+```
+### Proportion of Shooting Incidents by Hour of Day
+
+The next chart shows the proportion of incidents by the hour of the day.
+
+I believe it is obvious to see that the hours of the day with the least shooting incidents are between 6 and 11 am, while the time of day when most of the incidents occurred was between 10pm and 1am.
+
+``` {r hours} 
+nypd_shooting_incident_data_TT %>%
+  mutate(Hour = hour(OCCUR_TIME)) %>%
+  group_by(Hour) %>%
+  summarise(Incident_prop = n()/nrow(nypd_shooting_incident_data_TT)) %>%
+  
+  ggplot() +
+  geom_col(aes(x = Hour, y = Incident_prop))
+```
+
+### Modeling Data
+In order to create a model, I'm going to filter the data to complete rows only, this gets rid of rows that have an NA in any data point.  
+
+I'd like to explore the relationship between whether a shooting incident is flagged as murder to where the shooting incident occurred (inside vs outside) and which borough it occurred in.  
+
+To do this, I'm using a linear regression model with the murder flag as the dependent variable and borough and location description as independent variables.
+
+The summary table of the model shows that Brooklyn and Staten Island have the lowest murder rate, and if the shooting incident occurs outside, it is less likely to result in murder, which seems plausible.
+```{r modeling}
+nypd_complete <- nypd_shooting_incident_data_TT %>% filter(complete.cases(.))
+
+mod <- lm(STATISTICAL_MURDER_FLAG ~ BORO + LOC_OF_OCCUR_DESC, data = nypd_complete %>%
+  filter(LOC_OF_OCCUR_DESC != ""))
+
+nypd_shooting_murder_predicted <- nypd_complete %>%
+  filter(LOC_OF_OCCUR_DESC != "") %>% 
+  mutate(predicted_murder_percent = predict(mod))
+
+nypd_shooting_murder_predicted %>%
+  group_by(BORO, LOC_OF_OCCUR_DESC) %>%
+  mutate(incident_count = n(),
+            murder_count = sum(STATISTICAL_MURDER_FLAG),
+            percent_murder = murder_count/n()) %>%
+  distinct(BORO, LOC_OF_OCCUR_DESC, incident_count, murder_count, percent_murder, predicted_murder_percent)
+  
+summary(mod)
+
+```
+
+### Bias Identification
+
+This report suggests that crime might occur more frequently in certain areas and at certain times of day.  Further analysis can be done to solidify this suggestion, namely, gathering population data to show the proportion of crime in those areas, and connecting the incident time to the Borough data to see if there are time differences in certain areas.  
+
+There are quite a bit of missing information in this data set that I have essentially ignored.  I'm not sure who entered the data and why there are missing data points, further investigation would be needed to determine if this is the appropriate way to handle this.  
+
+Personally, I'm from a large city with a high crime rate (but not NYC) so I think that there are some questions I might ask and analysis I might perform that someone from a rural area might not.  In order to mitigate this, I think I would show the report to someone from a more rural area to get their opinion and see what sort of questions/analysis they might suggest.  Also, I'm a male who has never been a victim of a shooting incident, nor do I know anyone who has been, so that impacts how I think about this sort of data.
